@@ -81,6 +81,7 @@ import { buildModelGroups } from './model-groups.mjs';
 import {
   TELEMETRY_POLICY,
   DEFAULT_PRIVACY_SETTINGS,
+  SECURITY_PROFILES,
   OutboundAuditLog,
   checkProviderPrivacyAllowed,
   classifyProviderZdr,
@@ -2375,7 +2376,9 @@ export class Runtime {
     if (events.some(event => event.type === 'model.switched')) notes.push('checkpoint-handoff');
     if (events.some(event => event.type === 'evaluation.completed' && event.data.status === 'fail')) notes.push('repair-from-evidence');
     if (names.includes('repo.read') || names.includes('repo.patch')) notes.push('retrieve-before-edit');
-    this.store.recordLearning(`${id}:${task.contractVersion || 1}:verified`, observations, notes);
+    if (!this.getPrivacy().settings.ephemeralSession) {
+      this.store.recordLearning(`${id}:${task.contractVersion || 1}:verified`, observations, notes);
+    }
     if (task.routing?.lastRecoveryStrategy?.strategy) {
       this.store.recordStrategyLearning(`${id}:${task.contractVersion || 1}:strategy:win:${task.recoveries || 0}`, {
         modelFamily: task.routing.lastRecoveryStrategy.modelFamily || inferModelFamily(task.providerId),
@@ -3411,6 +3414,7 @@ export class Runtime {
     });
     return {
       telemetry: TELEMETRY_POLICY,
+      profiles: SECURITY_PROFILES,
       settings,
       providers,
       audit: this.outboundAudit.list()
@@ -3424,11 +3428,37 @@ export class Runtime {
     const current = this.getPrivacy().settings;
     const next = normalizePrivacySettings(patch, current);
     this.store.setLocalState('privacySettings', next);
-    return this.getPrivacy();
+    const appliedPreset = patch?.applyProfile && SECURITY_PROFILES[patch.applyProfile]?.permissionPreset;
+    if (appliedPreset && PERMISSION_PRESETS[appliedPreset]) {
+      this.updateGlobalPermissions([...PERMISSION_PRESETS[appliedPreset]]);
+    }
+    return { ...this.getPrivacy(), permissions: this.getGlobalPermissions() };
   }
   clearOutboundAudit() {
     this.outboundAudit.clear();
     return this.getPrivacy();
+  }
+  async burnSession({ includeTasks = false } = {}) {
+    this.outboundAudit.clear();
+    this.resetLearning();
+    this.deleteRefusalPattern(null);
+    await this.broker.browser.closeAll().catch(() => {});
+    let tasksPurged = 0;
+    if (includeTasks === true) {
+      for (const task of this.listTasks()) {
+        if (active.has(task.status) || this.runs.has(task.id) || this.crew.busy(task.id)) continue;
+        try {
+          await this.purgeTask(task.id);
+          tasksPurged += 1;
+        } catch {}
+      }
+    }
+    return {
+      burned: true,
+      cleared: { audit: true, learning: true, browsers: true, tasksPurged },
+      privacy: this.getPrivacy(),
+      overseer: this.getOverseer(),
+    };
   }
   getTransparencyConfig() {
     const stored = this.store.getLocalState('promptTransparency', DEFAULT_TRANSPARENCY_CONFIG);

@@ -533,3 +533,64 @@ test('Multi-provider Conclave dispatches 4 parallel specialist agents across Cla
   assert.ok(providerIds.has('openrouter:x-ai-grok-4.7'));
   assert.ok(providerIds.has('venice-catalog:venice-uncensored-1-2'));
 });
+
+test('Hardened & Lockdown security profiles enforce Strict ZDR / Airgap, Rules-of-Engagement scope, ephemeral memory guard, and Burn Bag wipe', async t => {
+  const { checkTargetScope } = await import('../src/privacy.mjs');
+  const { assertBrowserUrlAllowed } = await import('../src/browser-env.mjs');
+
+  // Unit check: wildcard RoE scope allowlist + denylist precedence
+  const scopePrivacy = {
+    scopeAllow: ['*.bounty-target.io', 'staging.app.test'],
+    scopeDeny: ['prod.bounty-target.io', 'billing.*'],
+  };
+  assert.equal(checkTargetScope('https://api.bounty-target.io/v1', scopePrivacy).allowed, true);
+  assert.equal(checkTargetScope('https://prod.bounty-target.io/v1', scopePrivacy).code, 'SCOPE_EXCLUDED');
+  assert.equal(checkTargetScope('https://unrelated.example.com/', scopePrivacy).code, 'SCOPE_OUT_OF_BOUNDS');
+  assert.throws(() => assertBrowserUrlAllowed('https://unrelated.example.com/', { privacy: scopePrivacy }), { code: 'SCOPE_OUT_OF_BOUNDS' });
+  assert.throws(() => assertBrowserUrlAllowed('https://prod.bounty-target.io/', { privacy: scopePrivacy }), { code: 'SCOPE_EXCLUDED' });
+
+  // Integration check: PATCH /api/privacy applyProfile hardened & lockdown + POST /api/privacy/burn
+  const dir = await mkdtemp(path.join(tmpdir(), 'godmode-lockdown-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const app = await createApp({ dataDir: dir, auth: false, providers: new Map() });
+  t.after(() => app.close());
+  const url = await app.listen(0);
+  const api = async (route, method = 'GET', body) => {
+    const res = await fetch(url + route, {
+      method,
+      headers: { 'x-g0d-request': '1', 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const json = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(json));
+    return json;
+  };
+
+  // Apply Hardened (Red Team / Bounty)
+  const hardened = await api('/api/privacy', 'PATCH', {
+    applyProfile: 'hardened',
+    scopeAllow: ['*.target.example'],
+    scopeDeny: ['prod.target.example'],
+  });
+  assert.equal(hardened.settings.securityProfile, 'hardened');
+  assert.equal(hardened.settings.strictZdr, true);
+  assert.equal(hardened.settings.localOnly, false);
+  assert.equal(hardened.settings.redactOutboundSecrets, true);
+  assert.equal(hardened.settings.ephemeralSession, true);
+  assert.deepEqual(hardened.settings.scopeAllow, ['*.target.example']);
+  assert.deepEqual(hardened.settings.scopeDeny, ['prod.target.example']);
+
+  // Apply Airgap Lockdown
+  const lockdown = await api('/api/privacy', 'PATCH', { applyProfile: 'lockdown' });
+  assert.equal(lockdown.settings.securityProfile, 'lockdown');
+  assert.equal(lockdown.settings.localOnly, true);
+  assert.equal(lockdown.settings.strictZdr, true);
+  assert.equal(lockdown.settings.ephemeralSession, true);
+
+  // Burn session data wipes outbound audit + learning cleanly
+  app.runtime.outboundAudit.record({ providerId: 'test', host: 'api.example.com', protocol: 'http', zdrClass: 'provider-policy', zdrFlags: [], secretsRedacted: 0, blocked: false });
+  assert.ok(app.runtime.outboundAudit.list().length >= 1);
+  const burned = await api('/api/privacy/burn', 'POST', { includeTasks: false });
+  assert.equal(burned.burned, true);
+  assert.equal(burned.privacy.audit.length, 0);
+});

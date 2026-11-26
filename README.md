@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/runtime-Node_22.13%2B-339933?style=flat-square" alt="Node.js 22.13+">
   <img src="https://img.shields.io/badge/npm_deps-0-d97706?style=flat-square" alt="Zero npm dependencies">
   <img src="https://img.shields.io/badge/telemetry-ZERO-dc2626?style=flat-square" alt="Zero Telemetry">
-  <img src="https://img.shields.io/badge/tests-300%2F300-16a34a?style=flat-square" alt="300 tests passing">
+  <img src="https://img.shields.io/badge/tests-301%2F301-16a34a?style=flat-square" alt="301 tests passing">
 </p>
 
 <p align="center">
@@ -53,10 +53,13 @@ CLI: `node src/cli.mjs --help` · Tests: `npm test` · Eval: `npm run bench:self
 - **Full Wire Transparency (`Settings → System`)**: Inspect, edit, and reset every system prompt block, all **27 tool schemas**, **Prefills & Message Shaping** (off by default), and **Live Wire Preview** before a single byte leaves localhost.
 - **First-Class Multi-Model CLI & Direct API Hub**: Expose full model lineups from local **Codex** (live `~/.codex/models_cache.json` sync + native effort/tier/verbosity), **Claude Code**, **Gemini CLI**, and **GitHub Copilot** logins alongside direct **OpenAI**, **Anthropic**, **xAI (Grok)**, **Google Gemini**, **Meta AI (Muse / Llama)**, **OpenRouter**, **Venice**, **Nous**, and **local Ollama/vLLM/MLX** — with live account catalogs and **Ultra-Plinian** routing & 2–4 model blind-judged arenas.
 - **Two Surfaces (`⌘⇧G`)**: **`GODMODƎ`** (sovereign chat, live browser, offline HTML5/SVG/Mermaid canvas with click-to-inspect) and **`GODCODƎ`** (isolated Git worktrees, multi-model patch races, Plan/Build mode, `Safe` default permission gate, Git checkpoints/rewind, long-horizon effort scaling & adaptive recovery).
-- **Zero-Dep Defense-in-Depth**: **0 npm dependencies**, **0 telemetry**, macOS Seatbelt / Linux `bwrap` command sandboxing, device-only Keychain / `secret-tool`, **Strict ZDR & Local-Only Airgap**, outbound secret redaction, strict zero-inline-`style=` CSP, and pre-request CDP SSRF gating. See [SECURITY.md](SECURITY.md).
+- **Zero-Dep Defense-in-Depth & Hardened/Lockdown Mode**: **0 npm dependencies**, **0 telemetry**, macOS Seatbelt / Linux `bwrap` sandboxing, device-only Keychain / `secret-tool`, 1-click **Hardened (Red Team / Bounty)** & **Airgap Lockdown** presets (Strict ZDR, ephemeral burn-bag, mechanically enforced Rules-of-Engagement target allow/denylists, 1-click session wipe), outbound secret redaction, strict zero-inline-`style=` CSP, and pre-request CDP SSRF gating. See [SECURITY.md](SECURITY.md).
 
 <details>
 <summary>More screenshots</summary>
+<p align="center">
+  <img src="docs/screenshots/godmode-conclave.png" alt="The Conclave — Multi-Engine Constellation Stage" width="88%">
+</p>
 <p align="center">
   <img src="docs/screenshots/godmode-system-lab.png" alt="Settings → System: Prompt Transparency & Prefill Lab" width="49%">
   <img src="docs/screenshots/godcode-light.png" alt="GODCODƎ Light Workspace" width="49%">

@@ -53,6 +53,13 @@
     </div>
     <div id="theme-popover-grid" class="theme-popover-grid"></div>
   </div>
+  <div id="overseer-popover" class="theme-popover overseer-popover hidden" role="dialog" aria-label="Overseer quick controls">
+    <div class="theme-popover-head">
+      <div><strong>Overseer</strong> <small id="overseer-pop-sub">Auto recovery &amp; soft-refusal judge</small></div>
+      <button type="button" class="icon-button" data-close-overseer-popover aria-label="Close overseer panel">×</button>
+    </div>
+    <div id="overseer-popover-body" class="overseer-popover-body"></div>
+  </div>
   <div id="ultra-popover" class="ultra-popover hidden" role="dialog" aria-label="Ultra-Plinian mode"></div>
   <div id="effort-popover" class="ultra-popover effort-popover hidden" role="dialog" aria-label="Thinking effort"></div>
   <button type="button" id="sidebar-backdrop" class="sidebar-backdrop hidden" aria-label="Close sidebar" tabindex="-1"></button>
@@ -73,6 +80,8 @@
       <div class="sidebar-section-title"><span id="sidebar-list-label">Chats</span><span id="task-count" class="number-badge">0</span></div>
       <div class="task-list" id="task-list"><p class="sidebar-empty">Opening your workspace…</p></div>
       <div class="sidebar-bottom">
+        <button class="sidebar-link security-posture-pill hidden" type="button" id="security-posture-pill" title="Active security posture — click to configure in Settings"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2.5 6 2.8v4.8c0 3.8-2.6 6.3-6 7.4-3.4-1.1-6-3.6-6-7.4V5.3z"/></svg><span id="security-posture-label">Hardened</span><span class="overseer-edge-badge" id="security-posture-scope"></span></button>
+        <button class="sidebar-link overseer-edge-btn" type="button" id="overseer-toggle" aria-haspopup="dialog" aria-expanded="false" aria-controls="overseer-popover" title="Quick Overseer controls &amp; model selection"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.2 10s3-5 7.8-5 7.8 5 7.8 5-3 5-7.8 5-7.8-5-7.8-5Z"/><circle cx="10" cy="10" r="2.4"/></svg><span>Overseer</span><span class="overseer-edge-badge" id="overseer-edge-badge">Off</span></button>
         <button class="sidebar-link" type="button" id="theme-toggle" aria-label="Choose theme"><svg viewBox="0 0 20 20" aria-hidden="true" id="theme-icon-dark"><circle cx="10" cy="10" r="5"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.93 4.93l1.41 1.41M13.66 13.66l1.41 1.41M4.93 15.07l1.41-1.41M13.66 6.34l1.41-1.41"/></svg><svg viewBox="0 0 20 20" aria-hidden="true" id="theme-icon-light" class="hidden"><path d="M13.4 3.6a6 6 0 1 0 3 3A7 7 0 0 1 13.4 3.6z"/></svg><span id="theme-label">Light mode</span></button>
         <button class="sidebar-link" type="button" id="settings-open"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/><circle cx="7" cy="5" r="2"/><circle cx="13" cy="10" r="2"/><circle cx="8" cy="15" r="2"/></svg><span>Settings</span></button>
         <button class="sidebar-link" type="button" id="about-open"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="M10 9v5M10 6v.5"/></svg><span>About</span><span class="version-label" id="version-label">v0.2.0</span></button>

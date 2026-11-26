@@ -3,7 +3,7 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import zlib from 'node:zlib';
-import { DEFAULT_PRIVACY_SETTINGS } from './privacy.mjs';
+import { DEFAULT_PRIVACY_SETTINGS, checkTargetScope } from './privacy.mjs';
 
 const MAX_REDIRECTS = 3;
 const MAX_RESPONSE_BYTES = 512 * 1024;
@@ -320,6 +320,11 @@ export async function safeWebFetch({ url, maxChars = DEFAULT_MAX_CHARS } = {}, {
   const reqHeaders = { 'user-agent': 'G0DC0D3/0.2 (research-harness)', 'accept': 'text/markdown, text/plain, text/html, application/json;q=0.9' };
 
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const scopeCheck = checkTargetScope(currentUrl.href, privacy);
+    if (!scopeCheck.allowed) {
+      onOutbound?.({ providerId: 'web.fetch', host: currentUrl.hostname, protocol: currentUrl.protocol.replace(':', ''), zdrClass: 'web-fetch', zdrFlags: ['scope-guard'], secretsRedacted: 0, blocked: true, reason: scopeCheck.message });
+      throw fault(scopeCheck.code, scopeCheck.message);
+    }
     onOutbound?.({ providerId: 'web.fetch', host: currentUrl.hostname, protocol: currentUrl.protocol.replace(':', ''), zdrClass: 'web-fetch', zdrFlags: ['ssrf-checked', 'dns-pinned'], secretsRedacted: 0, blocked: false });
     let status, respHeaders, buf, exceeded;
     if (fetchImpl === fetch && currentUrl._validatedAddress) {

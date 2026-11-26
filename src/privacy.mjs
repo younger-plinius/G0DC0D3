@@ -35,35 +35,189 @@ export const CLI_NO_TELEMETRY_ENV = Object.freeze({
   SENTRY_DSN: ''
 });
 
+export const SECURITY_PROFILES = Object.freeze({
+  standard: Object.freeze({
+    id: 'standard',
+    label: 'Standard',
+    zdrRouting: true,
+    strictZdr: false,
+    localOnly: false,
+    redactOutboundSecrets: true,
+    ephemeralSession: false,
+    permissionPreset: null,
+  }),
+  hardened: Object.freeze({
+    id: 'hardened',
+    label: 'Hardened (Red Team / Bounty)',
+    zdrRouting: true,
+    strictZdr: true,
+    localOnly: false,
+    redactOutboundSecrets: true,
+    ephemeralSession: true,
+    permissionPreset: 'safe',
+  }),
+  lockdown: Object.freeze({
+    id: 'lockdown',
+    label: 'Airgap Lockdown (Zero Egress)',
+    zdrRouting: true,
+    strictZdr: true,
+    localOnly: true,
+    redactOutboundSecrets: true,
+    ephemeralSession: true,
+    permissionPreset: 'default',
+  }),
+});
+
 export const DEFAULT_PRIVACY_SETTINGS = Object.freeze({
+  securityProfile: 'standard',
   zdrRouting: true,
   strictZdr: false,
   localOnly: false,
-  redactOutboundSecrets: true
+  redactOutboundSecrets: true,
+  ephemeralSession: false,
+  scopeAllow: Object.freeze([]),
+  scopeDeny: Object.freeze([]),
 });
+
+function normalizeScopePatterns(raw, fieldName) {
+  if (raw === undefined) return undefined;
+  const list = typeof raw === 'string'
+    ? raw.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
+    : Array.isArray(raw) ? raw : null;
+  if (!list) {
+    throw Object.assign(new Error(`Privacy setting "${fieldName}" must be an array of host patterns.`), { code: 'INVALID_PRIVACY', status: 400 });
+  }
+  const seen = new Set();
+  const out = [];
+  for (const item of list) {
+    if (typeof item !== 'string') {
+      throw Object.assign(new Error(`Invalid host pattern in ${fieldName}.`), { code: 'INVALID_PRIVACY', status: 400 });
+    }
+    let clean = item.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '').replace(/:\d+$/, '');
+    if (!clean) continue;
+    if (clean.length > 200 || !/^[a-z0-9*._:-]+$/.test(clean)) {
+      throw Object.assign(new Error(`Invalid host pattern "${item.slice(0, 60)}" in ${fieldName}. Use hostnames or *.domain wildcards.`), { code: 'INVALID_PRIVACY', status: 400 });
+    }
+    if (seen.has(clean)) continue;
+    seen.add(clean);
+    out.push(clean);
+    if (out.length >= 64) break;
+  }
+  return out;
+}
+
+function hostMatchesScopePattern(host, pattern) {
+  const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
+  const p = String(pattern || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h || !p) return false;
+  if (p === '*') return true;
+  if (p.startsWith('*.')) {
+    const suffix = p.slice(2);
+    return h === suffix || h.endsWith('.' + suffix);
+  }
+  if (!p.includes('*')) return h === p;
+  // Safe literal wildcard match (no catastrophic regex backtracking)
+  const parts = p.split('*');
+  let pos = 0;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+    if (i === 0) {
+      if (!h.startsWith(part)) return false;
+      pos = part.length;
+    } else if (i === parts.length - 1) {
+      if (!h.endsWith(part) || h.length - part.length < pos) return false;
+      pos = h.length;
+    } else {
+      const idx = h.indexOf(part, pos);
+      if (idx === -1) return false;
+      pos = idx + part.length;
+    }
+  }
+  return true;
+}
+
+export function checkTargetScope(rawUrl, privacy = DEFAULT_PRIVACY_SETTINGS) {
+  const scopeAllow = Array.isArray(privacy?.scopeAllow) ? privacy.scopeAllow : [];
+  const scopeDeny = Array.isArray(privacy?.scopeDeny) ? privacy.scopeDeny : [];
+  if (!scopeAllow.length && !scopeDeny.length) return { allowed: true, code: null, message: null };
+  let host = '';
+  try { host = new URL(String(rawUrl || '')).hostname.toLowerCase(); } catch { host = String(rawUrl || '').toLowerCase(); }
+  for (const deny of scopeDeny) {
+    if (hostMatchesScopePattern(host, deny)) {
+      return {
+        allowed: false,
+        code: 'SCOPE_EXCLUDED',
+        message: `Target "${host}" is explicitly excluded by your Rules-of-Engagement denylist (${deny}).`
+      };
+    }
+  }
+  if (scopeAllow.length > 0 && !scopeAllow.some(allow => hostMatchesScopePattern(host, allow))) {
+    return {
+      allowed: false,
+      code: 'SCOPE_OUT_OF_BOUNDS',
+      message: `Target "${host}" is outside your active Rules-of-Engagement scope allowlist (${scopeAllow.slice(0, 4).join(', ')}${scopeAllow.length > 4 ? '…' : ''}).`
+    };
+  }
+  return { allowed: true, code: null, message: null };
+}
 
 export function normalizePrivacySettings(input = {}, base = DEFAULT_PRIVACY_SETTINGS) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     throw Object.assign(new Error('Privacy settings must be an object.'), { code: 'INVALID_PRIVACY', status: 400 });
   }
-  const allowed = new Set(Object.keys(DEFAULT_PRIVACY_SETTINGS));
+  const allowed = new Set([...Object.keys(DEFAULT_PRIVACY_SETTINGS), 'applyProfile']);
+  const boolKeys = new Set(['zdrRouting', 'strictZdr', 'localOnly', 'redactOutboundSecrets', 'ephemeralSession']);
   for (const key of Object.keys(input)) {
     if (!allowed.has(key)) {
       throw Object.assign(new Error(`Unknown privacy setting: ${key}`), { code: 'INVALID_PRIVACY', status: 400 });
     }
-    if (typeof input[key] !== 'boolean') {
+    if (boolKeys.has(key) && typeof input[key] !== 'boolean') {
       throw Object.assign(new Error(`Privacy setting "${key}" must be a boolean.`), { code: 'INVALID_PRIVACY', status: 400 });
     }
   }
+  let profileSeed = {};
+  if (input.applyProfile !== undefined) {
+    const pid = String(input.applyProfile || '').trim().toLowerCase();
+    if (!Object.hasOwn(SECURITY_PROFILES, pid)) {
+      throw Object.assign(new Error('Choose security profile: standard, hardened, or lockdown.'), { code: 'INVALID_PRIVACY', status: 400 });
+    }
+    const p = SECURITY_PROFILES[pid];
+    profileSeed = {
+      securityProfile: p.id,
+      zdrRouting: p.zdrRouting,
+      strictZdr: p.strictZdr,
+      localOnly: p.localOnly,
+      redactOutboundSecrets: p.redactOutboundSecrets,
+      ephemeralSession: p.ephemeralSession,
+    };
+  }
+  if (input.securityProfile !== undefined && !Object.hasOwn(SECURITY_PROFILES, input.securityProfile)) {
+    throw Object.assign(new Error('Choose security profile: standard, hardened, or lockdown.'), { code: 'INVALID_PRIVACY', status: 400 });
+  }
+  const scopeAllow = normalizeScopePatterns(input.scopeAllow, 'scopeAllow') ?? [...(base.scopeAllow || [])];
+  const scopeDeny = normalizeScopePatterns(input.scopeDeny, 'scopeDeny') ?? [...(base.scopeDeny || [])];
   const merged = {
-    zdrRouting: input.zdrRouting ?? base.zdrRouting ?? true,
-    strictZdr: input.strictZdr ?? base.strictZdr ?? false,
-    localOnly: input.localOnly ?? base.localOnly ?? false,
-    redactOutboundSecrets: input.redactOutboundSecrets ?? base.redactOutboundSecrets ?? true
+    zdrRouting: input.zdrRouting ?? profileSeed.zdrRouting ?? base.zdrRouting ?? true,
+    strictZdr: input.strictZdr ?? profileSeed.strictZdr ?? base.strictZdr ?? false,
+    localOnly: input.localOnly ?? profileSeed.localOnly ?? base.localOnly ?? false,
+    redactOutboundSecrets: input.redactOutboundSecrets ?? profileSeed.redactOutboundSecrets ?? base.redactOutboundSecrets ?? true,
+    ephemeralSession: input.ephemeralSession ?? profileSeed.ephemeralSession ?? base.ephemeralSession ?? false,
+    scopeAllow,
+    scopeDeny,
   };
   // Strict ZDR always enforces ZDR request routing.
   if (merged.strictZdr) merged.zdrRouting = true;
-  return merged;
+  // Derive honest active security profile badge from effective settings
+  const derivedProfile = (merged.localOnly && merged.strictZdr && merged.redactOutboundSecrets)
+    ? 'lockdown'
+    : (merged.strictZdr && merged.redactOutboundSecrets && (merged.ephemeralSession || scopeAllow.length > 0 || scopeDeny.length > 0))
+      ? 'hardened'
+      : 'standard';
+  return {
+    securityProfile: profileSeed.securityProfile || derivedProfile,
+    ...merged,
+  };
 }
 
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);

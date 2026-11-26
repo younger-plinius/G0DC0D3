@@ -269,6 +269,7 @@ export async function createApp({dataDir=process.env.G0D_DATA_DIR || path.join(p
       if(req.method==='GET' && url.pathname==='/api/privacy')return send(res,200,runtime.getPrivacy());
       if(req.method==='PATCH' && url.pathname==='/api/privacy')return send(res,200,runtime.updatePrivacy(await readBody(req)));
       if(req.method==='DELETE' && url.pathname==='/api/privacy/audit'){await readBody(req);return send(res,200,runtime.clearOutboundAudit());}
+      if(req.method==='POST' && url.pathname==='/api/privacy/burn')return send(res,200,await runtime.burnSession(await readBody(req)));
       if(req.method==='GET' && url.pathname==='/api/transparency')return send(res,200,runtime.getTransparency(url.searchParams.get('taskId')||null));
       if(req.method==='PATCH' && url.pathname==='/api/transparency'){const body=await readBody(req);return send(res,200,runtime.updateTransparency(body,url.searchParams.get('taskId')||body?.taskId||null));}
       if(req.method==='POST' && url.pathname==='/api/transparency/reset'){const body=await readBody(req);return send(res,200,runtime.resetTransparency({...body,taskId:url.searchParams.get('taskId')||body?.taskId||null}));}

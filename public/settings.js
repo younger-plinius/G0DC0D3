@@ -518,6 +518,45 @@ document.body.insertAdjacentHTML('beforeend', `<dialog id="settings-dialog" clas
         </div>
         <p class="field-help">G0DC0D3 ships with zero telemetry endpoints, never fingerprints local CLI auth files, and forcibly disables vendor CLI telemetry env vars (<code>DO_NOT_TRACK</code>, <code>OTEL_SDK_DISABLED</code>, <code>DISABLE_TELEMETRY</code>).</p>
       </div>
+      <section class="settings-card security-profile-card" id="security-profile-card">
+        <div class="permission-gate-header">
+          <div>
+            <h4>Security Posture &amp; Lockdown Mode</h4>
+            <p class="field-help">1-click OPSEC presets bundling ZDR enforcement, secret scrubbing, permission gates, Rules-of-Engagement scope, and ephemeral burn-bag controls for red teams, bug bounty &amp; IR.</p>
+          </div>
+          <span class="meta-chip" id="security-profile-badge">Standard</span>
+        </div>
+        <div class="security-profiles-grid" role="group" aria-label="Security posture presets">
+          <button type="button" class="security-profile-btn" data-security-profile="standard" aria-pressed="true">
+            <strong>Standard</strong>
+            <span>ZDR request routing &amp; secret scrubbing on. Everyday coding and chat.</span>
+          </button>
+          <button type="button" class="security-profile-btn is-hardened" data-security-profile="hardened" aria-pressed="false">
+            <strong>⛨ Hardened (Red Team / Bounty)</strong>
+            <span>Locks Strict ZDR + secret scrubbing + Safe gate + Ephemeral engagement (no disk memory/learning).</span>
+          </button>
+          <button type="button" class="security-profile-btn is-lockdown" data-security-profile="lockdown" aria-pressed="false">
+            <strong>⛨ Airgap Lockdown</strong>
+            <span>Zero cloud egress (local models only) + Ask Everything gate + Ephemeral engagement.</span>
+          </button>
+        </div>
+        <div class="setting-row"><label for="privacy-ephemeral-session">Ephemeral Engagement ("Burn Bag")<small>Pauses cross-session memory saves and local outcome learning so sensitive engagement artifacts stay strictly scoped.</small></label><input type="checkbox" role="switch" class="toggle" id="privacy-ephemeral-session" data-privacy-toggle="ephemeralSession"></div>
+        <div class="scope-guard-block">
+          <div class="scope-guard-head">
+            <h5>Rules-of-Engagement Target Scope (Optional)</h5>
+            <span class="meta-chip" id="privacy-scope-badge">Unrestricted</span>
+          </div>
+          <p class="field-help">Mechanically enforced before every <code>web.fetch</code> and <code>browser.open</code> call. Comma- or newline-separated hostnames or <code>*.domain</code> wildcards.</p>
+          <div class="scope-fields-grid">
+            <label class="field-label" for="privacy-scope-allow">In-scope allowlist <span class="optional">blank = allow public hosts</span><input id="privacy-scope-allow" type="text" placeholder="e.g. *.target-bounty.com, staging.app.io, localhost" autocomplete="off" spellcheck="false"></label>
+            <label class="field-label" for="privacy-scope-deny">Out-of-scope denylist <span class="optional">always blocked</span><input id="privacy-scope-deny" type="text" placeholder="e.g. prod.target-bounty.com, billing.*" autocomplete="off" spellcheck="false"></label>
+          </div>
+          <div class="burn-bag-row">
+            <button type="button" class="button button-secondary" id="privacy-scope-save">Save target scope</button>
+            <button type="button" class="button button-quiet burn-bag-btn" id="privacy-burn-btn" title="Clear outbound audit log, local learning, learned refusal signatures, and close ephemeral browser sessions">Burn session data</button>
+          </div>
+        </div>
+      </section>
       <section class="settings-card privacy-controls-section">
         <div class="settings-card-head">
           <h4>Zero Data Retention (ZDR) &amp; Airgap Controls</h4>
@@ -897,8 +936,24 @@ function renderPrivacySettings(data) {
   setChecked('#privacy-strict-zdr', s.strictZdr === true);
   setChecked('#privacy-local-only', s.localOnly === true);
   setChecked('#privacy-redact-secrets', s.redactOutboundSecrets !== false);
+  setChecked('#privacy-ephemeral-session', s.ephemeralSession === true);
   const routingEl = $('#privacy-zdr-routing');
   if (routingEl) routingEl.disabled = Boolean(s.strictZdr);
+  const activeProfile = s.securityProfile || (s.localOnly && s.strictZdr ? 'lockdown' : s.strictZdr && s.ephemeralSession ? 'hardened' : 'standard');
+  $$('[data-security-profile]').forEach(btn => {
+    const on = btn.dataset.securityProfile === activeProfile;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-pressed', String(on));
+  });
+  setText('#security-profile-badge', activeProfile === 'lockdown' ? 'Airgap Lockdown' : activeProfile === 'hardened' ? 'Hardened' : 'Standard');
+  const allow = Array.isArray(s.scopeAllow) ? s.scopeAllow : [];
+  const deny = Array.isArray(s.scopeDeny) ? s.scopeDeny : [];
+  const allowEl = $('#privacy-scope-allow');
+  const denyEl = $('#privacy-scope-deny');
+  if (allowEl && document.activeElement !== allowEl) allowEl.value = allow.join(', ');
+  if (denyEl && document.activeElement !== denyEl) denyEl.value = deny.join(', ');
+  setText('#privacy-scope-badge', (allow.length || deny.length) ? `${allow.length} allow · ${deny.length} deny` : 'Unrestricted');
+  if (typeof window.syncSecurityPostureChrome === 'function') window.syncSecurityPostureChrome(privacy);
 
   const provList = $('#privacy-providers-list');
   if (provList) {
@@ -929,11 +984,23 @@ async function loadPrivacySettings() {
 async function updatePrivacySetting(key, value) {
   settingsFeedback('Saving privacy setting…');
   try {
-    const data = await api('/api/privacy', { method: 'PATCH', body: JSON.stringify({ [key]: value }) });
+    const payload = typeof key === 'object' ? key : { [key]: value };
+    const data = await api('/api/privacy', { method: 'PATCH', body: JSON.stringify(payload) });
+    if (data.permissions) {
+      globalPermissionsState = data.permissions;
+      state.permissions = data.permissions;
+      renderPermissionsSection();
+    }
     renderPrivacySettings(data);
+    updateSettingsNavBadges();
     if (selectedData?.task) renderTaskMetaStrip(selectedData.task);
-    settingsFeedback('Privacy policy saved.');
-    toast(`Privacy updated: ${key} ${value ? 'ON' : 'OFF'}`);
+    const label = payload.applyProfile
+      ? `Security posture set to ${payload.applyProfile === 'lockdown' ? 'Airgap Lockdown' : payload.applyProfile === 'hardened' ? 'Hardened (Red Team / Bounty)' : 'Standard'}.`
+      : typeof key === 'string'
+        ? `Privacy updated: ${key} ${value ? 'ON' : 'OFF'}`
+        : 'Security scope saved.';
+    settingsFeedback(label);
+    toast(label);
   } catch (error) {
     settingsFeedback(error.message, true);
     toast(error.message);
@@ -1074,7 +1141,12 @@ function updateSettingsNavBadges() {
   setBadge('settings-badge-tools', preset === 'permissive' ? 'Auto' : preset === 'auto' ? 'AI' : preset === 'safe' ? 'Safe' : preset === 'acceptEdits' ? 'Edits' : preset === 'dontAsk' ? 'CI' : 'Ask');
   const ps = state.privacy?.settings;
   if (ps) {
-    setBadge('settings-badge-privacy', ps.localOnly ? 'Airgap' : ps.strictZdr ? 'Strict' : ps.zdrRouting !== false ? 'ZDR' : '', ps.localOnly || ps.strictZdr ? 'is-ok' : '');
+    const badgeTxt = ps.securityProfile === 'lockdown' ? 'Lockdown'
+      : ps.securityProfile === 'hardened' ? 'Hardened'
+      : ps.localOnly ? 'Airgap'
+      : ps.strictZdr ? 'Strict'
+      : ps.zdrRouting !== false ? 'ZDR' : '';
+    setBadge('settings-badge-privacy', badgeTxt, ps.securityProfile === 'lockdown' || ps.securityProfile === 'hardened' || ps.localOnly || ps.strictZdr ? 'is-ok' : '');
   }
   const ov = transparencyState?.overrideCount;
   const ovTotal = (ov?.prompts || 0) + (ov?.tools || 0) + (ov?.disabledTools || 0) + (ov?.injectionsActive ? 1 : 0);
@@ -1316,6 +1388,8 @@ $('#settings-dialog').addEventListener('click', async event => {
     selectSettingsPane(settingsPane);
     return;
   }
+  const secProfileBtn = event.target.closest('[data-security-profile]');
+  if (secProfileBtn) { updatePrivacySetting({ applyProfile: secProfileBtn.dataset.securityProfile }); return; }
   const presetBtn = event.target.closest('[data-permission-preset]');
   if (presetBtn) { applyPermissionPreset(presetBtn.dataset.permissionPreset); return; }
   const delPerm = event.target.closest('[data-delete-perm-rule]');
@@ -1485,6 +1559,33 @@ $('#skill-add-form').addEventListener('submit', async event => {
 });
 $('#learning-reset').addEventListener('click', async () => { try { await api('/api/learning', { method: 'DELETE', body: '{}' }); await loadLearning(); settingsFeedback('Local learning reset.'); } catch (error) { settingsFeedback(error.message, true); } });
 $('#privacy-audit-clear').addEventListener('click', async () => { try { const data = await api('/api/privacy/audit', { method: 'DELETE', body: '{}' }); renderPrivacySettings(data); settingsFeedback('Outbound audit log cleared.'); } catch (error) { settingsFeedback(error.message, true); } });
+$('#privacy-scope-save')?.addEventListener('click', () => {
+  const scopeAllow = ($('#privacy-scope-allow')?.value || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  const scopeDeny = ($('#privacy-scope-deny')?.value || '').split(/[\n,]+/).map(s => s.trim()).filter(Boolean);
+  updatePrivacySetting({ scopeAllow, scopeDeny });
+});
+$('#privacy-burn-btn')?.addEventListener('click', async () => {
+  const btn = $('#privacy-burn-btn');
+  if (btn) btn.disabled = true;
+  settingsFeedback('Burning session telemetry, learning, and ephemeral browser profiles…');
+  try {
+    const res = await api('/api/privacy/burn', { method: 'POST', body: JSON.stringify({ includeTasks: false }) });
+    if (res.privacy) renderPrivacySettings(res.privacy);
+    if (res.overseer && typeof overseerData !== 'undefined') {
+      overseerData = res.overseer;
+      state.overseer = res.overseer;
+      if (typeof renderOverseerSection === 'function') renderOverseerSection();
+      if (typeof renderOverseerEdge === 'function') renderOverseerEdge();
+    }
+    settingsFeedback('Session burned: cleared outbound audit, local learning, refusal patterns & ephemeral browsers.');
+    toast('Session burned cleanly.');
+  } catch (error) {
+    settingsFeedback(error.message, true);
+    toast(error.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+});
 $('#drafts-clear').addEventListener('click', () => { composerDrafts.clear(); composerDraftTimes.clear(); saveComposerDraft('welcome', ''); $('#composer-input').value = ''; resizeComposer(); renderComposer(); settingsFeedback(draftStorageAvailable ? 'Saved drafts cleared.' : 'Could not clear stored drafts.', !draftStorageAvailable); });
 $('#benchmark-open')?.addEventListener('click', () => { $('#settings-dialog')?.close(); openBenchmark(); });
 $('#welcome-create')?.addEventListener('click', () => { $('#settings-dialog')?.close(); openCreate(); });

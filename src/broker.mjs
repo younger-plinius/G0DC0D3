@@ -665,13 +665,17 @@ export class Broker {
         result = { ok: true, ...summary };
       } else if (call.name === 'memory.save') {
         this.assertCurrent(taskId, epoch, signal);
-        const resolvedScope = call.args.scope === 'project' ? `project:${task.sourcePath || task.workspace}` : 'global';
-        result = this.memory.saveMemory({
-          title: call.args.title,
-          content: call.args.content,
-          scope: resolvedScope,
-          tags: call.args.tags || []
-        });
+        if (outbound?.privacy?.ephemeralSession) {
+          result = { ok: false, error: { code: 'EPHEMERAL_SESSION', message: 'Ephemeral / Burn Bag mode is active — cross-session memory writes are paused.' } };
+        } else {
+          const resolvedScope = call.args.scope === 'project' ? `project:${task.sourcePath || task.workspace}` : 'global';
+          result = this.memory.saveMemory({
+            title: call.args.title,
+            content: call.args.content,
+            scope: resolvedScope,
+            tags: call.args.tags || []
+          });
+        }
       } else if (call.name === 'memory.delete') {
         this.assertCurrent(taskId, epoch, signal);
         result = this.memory.deleteMemory(call.args.id);

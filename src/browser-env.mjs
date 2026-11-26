@@ -4,7 +4,7 @@ import { promises as fs, constants as fsConstants } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
-import { DEFAULT_PRIVACY_SETTINGS } from './privacy.mjs';
+import { DEFAULT_PRIVACY_SETTINGS, checkTargetScope } from './privacy.mjs';
 import { isPrivateIp } from './web-fetch.mjs';
 
 const fault = (code, message) => Object.assign(new Error(message), { code });
@@ -122,6 +122,20 @@ export function assertBrowserUrlAllowed(rawUrl, { privacy = DEFAULT_PRIVACY_SETT
   const host = parsed.hostname.toLowerCase();
   if (isBlockedPrivateHost(host)) {
     throw fault('SSRF_BLOCKED', `Blocked private network or cloud metadata host "${host}" in contained browser.`);
+  }
+  const scopeCheck = checkTargetScope(parsed.href, privacy);
+  if (!scopeCheck.allowed) {
+    onOutbound?.({
+      providerId: 'browser',
+      host,
+      protocol: parsed.protocol.replace(':', ''),
+      zdrClass: 'browser-env',
+      zdrFlags: ['ephemeral-profile', 'scope-guard'],
+      secretsRedacted: 0,
+      blocked: true,
+      reason: scopeCheck.message,
+    });
+    throw fault(scopeCheck.code, scopeCheck.message);
   }
   const local = isLoopbackHost(host);
   if (!local && privacy?.localOnly) {

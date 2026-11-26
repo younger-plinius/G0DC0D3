@@ -2632,7 +2632,9 @@ let overseerBusy = false;
 async function loadOverseer() {
   try {
     overseerData = await api('/api/overseer');
+    state.overseer = overseerData;
     renderOverseerSection();
+    renderOverseerEdge();
   } catch {}
 }
 
@@ -2640,8 +2642,10 @@ async function updateOverseerSettings(patch) {
   if (overseerBusy) return;
   overseerBusy = true;
   renderOverseerSection();
+  renderOverseerEdge();
   try {
     overseerData = await api('/api/overseer', { method: 'PATCH', body: JSON.stringify(patch) });
+    state.overseer = overseerData;
     const msg = overseerData.settings?.enabled && overseerData.selectedProvider
       ? `Overseer active: ${overseerData.selectedProvider.label}.`
       : 'Overseer settings saved.';
@@ -2653,6 +2657,104 @@ async function updateOverseerSettings(patch) {
   } finally {
     overseerBusy = false;
     renderOverseerSection();
+    renderOverseerEdge();
+  }
+}
+
+function syncSecurityPostureChrome(privacyData = null) {
+  const pill = $('#security-posture-pill');
+  if (!pill) return;
+  const s = (privacyData || state.privacy)?.settings || {};
+  const prof = s.securityProfile || (s.localOnly && s.strictZdr ? 'lockdown' : s.strictZdr && s.ephemeralSession ? 'hardened' : 'standard');
+  const allowLen = Array.isArray(s.scopeAllow) ? s.scopeAllow.length : 0;
+  const denyLen = Array.isArray(s.scopeDeny) ? s.scopeDeny.length : 0;
+  const hasScope = allowLen > 0 || denyLen > 0;
+  const show = prof !== 'standard' || hasScope;
+  pill.classList.toggle('hidden', !show);
+  pill.classList.toggle('is-lockdown', prof === 'lockdown');
+  pill.classList.toggle('is-hardened', prof === 'hardened' || (prof === 'standard' && hasScope));
+  setText('#security-posture-label', prof === 'lockdown' ? 'Lockdown' : prof === 'hardened' ? 'Hardened' : 'Scoped');
+  setText('#security-posture-scope', hasScope ? `${allowLen}/${denyLen}` : (prof === 'lockdown' ? 'Airgap' : 'ZDR'));
+}
+window.syncSecurityPostureChrome = syncSecurityPostureChrome;
+
+function renderOverseerEdge() {
+  const data = overseerData || state.overseer;
+  const badge = $('#overseer-edge-badge');
+  const btn = $('#overseer-toggle');
+  if (badge && btn) {
+    const s = data?.settings || {};
+    const active = Boolean(data?.ready);
+    const blocked = Boolean(s.enabled && s.providerId && !data?.selectedProvider?.allowedByPolicy);
+    badge.textContent = blocked ? 'Blocked' : active ? 'Active' : 'Off';
+    badge.className = `overseer-edge-badge${active ? ' is-active' : blocked ? ' is-blocked' : ''}`;
+    btn.classList.toggle('is-overseer-on', active);
+  }
+  const pop = $('#overseer-popover');
+  const body = $('#overseer-popover-body');
+  if (!pop || !body || pop.classList.contains('hidden')) return;
+  if (!data) {
+    body.innerHTML = '<p class="field-help">Loading Overseer status…</p>';
+    return;
+  }
+  const s = data.settings || {};
+  const providers = Array.isArray(data.availableProviders) ? data.availableProviders : [];
+  const topRecommended = providers.find(p => p.recommended && p.allowedByPolicy) || providers.find(p => p.allowedByPolicy) || null;
+  const isEnabled = Boolean(s.enabled && s.providerId);
+  const activeLabel = data.ready
+    ? (data.selectedProvider?.label || s.providerId)
+    : (isEnabled && !data.selectedProvider?.allowedByPolicy ? 'Blocked by Privacy Gate' : 'Idle · zero token cost');
+  setText('#overseer-pop-sub', activeLabel);
+  const optLabel = p => `${p.label}${p.suitabilityTag ? ` · ${p.suitabilityTag}` : ''}${p.allowedByPolicy ? '' : ' (blocked)'}`;
+  const primaryOpts = [
+    '<option value="">None (Off)</option>',
+    ...providers.map(p => `<option value="${escapeHTML(p.id)}" ${p.id === s.providerId ? 'selected' : ''}>${escapeHTML(optLabel(p))}</option>`)
+  ].join('');
+  const backupOpts = [
+    '<option value="">Auto failover</option>',
+    ...providers.filter(p => p.id !== s.providerId).map(p => `<option value="${escapeHTML(p.id)}" ${p.id === s.backupProviderId ? 'selected' : ''}>${escapeHTML(optLabel(p))}</option>`)
+  ].join('');
+  const patternCount = (data.refusalPatterns || []).length;
+  const stratCount = (data.strategyStats || []).length;
+  body.innerHTML = `
+    <div class="overseer-pop-row">
+      <div class="overseer-pop-status">
+        <span class="svc-dot ${data.ready ? 'svc-connected' : isEnabled ? 'svc-blocked' : 'svc-muted'}" aria-hidden="true"></span>
+        <strong>${data.ready ? 'Overseer Active' : isEnabled ? 'Blocked by Privacy' : 'Overseer Off'}</strong>
+      </div>
+      <button type="button" class="button ${isEnabled ? 'button-secondary' : 'button-primary'} overseer-pop-switch" data-overseer-pop-toggle="${isEnabled ? 'off' : escapeHTML(topRecommended?.id || '')}" ${overseerBusy || (!isEnabled && !topRecommended) ? 'disabled' : ''}>${isEnabled ? 'Turn off' : topRecommended ? 'Enable Auto' : 'No model'}</button>
+    </div>
+    <div class="overseer-pop-selects">
+      <label class="overseer-pop-field"><span>Primary Overseer</span><select id="overseer-pop-primary" ${overseerBusy ? 'disabled' : ''}>${primaryOpts}</select></label>
+      <label class="overseer-pop-field"><span>Backup Failover</span><select id="overseer-pop-backup" ${overseerBusy || !s.providerId ? 'disabled' : ''}>${backupOpts}</select></label>
+    </div>
+    <div class="overseer-pop-checks">
+      <label class="check-setting"><input type="checkbox" id="overseer-pop-judge" ${s.autoJudgeAmbiguous !== false ? 'checked' : ''} ${overseerBusy || !s.providerId ? 'disabled' : ''}> Judge ambiguous refusals</label>
+      <label class="check-setting"><input type="checkbox" id="overseer-pop-unblock" ${s.autoUnblockStuck !== false ? 'checked' : ''} ${overseerBusy || !s.providerId ? 'disabled' : ''}> Unblock loops &amp; plateaus</label>
+    </div>
+    <div class="overseer-pop-foot">
+      <span class="field-help">${patternCount} learned 0ms ${patternCount === 1 ? 'pattern' : 'patterns'} · ${stratCount} ${stratCount === 1 ? 'bandit' : 'bandits'}</span>
+      <div class="overseer-pop-foot-actions">
+        ${patternCount > 0 ? '<button type="button" class="button button-quiet" data-overseer-pop-clear>Clear</button>' : ''}
+        <button type="button" class="button button-quiet" data-overseer-pop-settings>Full settings →</button>
+      </div>
+    </div>`;
+}
+
+function toggleOverseerPopover(force) {
+  const pop = $('#overseer-popover');
+  const btn = $('#overseer-toggle');
+  if (!pop) return;
+  const open = typeof force === 'boolean' ? force : pop.classList.contains('hidden');
+  if (open) {
+    $('#theme-popover')?.classList.add('hidden');
+    $('#theme-toggle')?.setAttribute('aria-expanded', 'false');
+  }
+  pop.classList.toggle('hidden', !open);
+  btn?.setAttribute('aria-expanded', String(open));
+  if (open) {
+    renderOverseerEdge();
+    void loadOverseer();
   }
 }
 
@@ -5910,6 +6012,8 @@ async function refresh() {
       return;
     }
     Object.assign(state, data);
+    syncSecurityPostureChrome(state.privacy);
+    renderOverseerEdge();
     if (typeof loadPromptLibrary === 'function' && data.promptCommandRevision !== promptRevision)
       await loadPromptLibrary(data.promptCommandRevision);
     state.tasks = Array.isArray(data.tasks) ? data.tasks : [];
@@ -7797,6 +7901,58 @@ $('#route-form').addEventListener('submit', saveRoute);
 $('#benchmark-open')?.addEventListener('click', openBenchmark);
 $('#benchmark-run').addEventListener('click', runBenchmark);
 $('#about-open').addEventListener('click', () => { dismissDrawers(); renderAbout(); if (!$('#about-dialog').open) $('#about-dialog').showModal(); });
+$('#security-posture-pill')?.addEventListener('click', () => { toggleOverseerPopover(false); openSettings('privacy'); });
+$('#overseer-toggle')?.addEventListener('click', event => { event.stopPropagation(); toggleOverseerPopover(); });
+$('#overseer-popover')?.addEventListener('click', async event => {
+  event.stopPropagation();
+  if (event.target.closest('[data-close-overseer-popover]')) { toggleOverseerPopover(false); return; }
+  const toggleBtn = event.target.closest('[data-overseer-pop-toggle]');
+  if (toggleBtn) {
+    const val = toggleBtn.dataset.overseerPopToggle;
+    if (val === 'off') await updateOverseerSettings({ enabled: false });
+    else if (val) await updateOverseerSettings({ enabled: true, providerId: val });
+    return;
+  }
+  if (event.target.closest('[data-overseer-pop-clear]')) {
+    try {
+      const res = await api('/api/learning/patterns', { method: 'DELETE', body: '{}' });
+      if (res.overseer) { overseerData = res.overseer; state.overseer = res.overseer; }
+      renderOverseerSection();
+      renderOverseerEdge();
+      toast('Cleared learned refusal signatures.');
+    } catch (error) { toast(error.message); }
+    return;
+  }
+  if (event.target.closest('[data-overseer-pop-settings]')) {
+    toggleOverseerPopover(false);
+    openSettings('models', { subtab: 'overseer' });
+  }
+});
+$('#overseer-popover')?.addEventListener('change', event => {
+  const t = event.target;
+  if (t.id === 'overseer-pop-primary') {
+    const val = t.value || null;
+    updateOverseerSettings({ providerId: val, enabled: Boolean(val) });
+  } else if (t.id === 'overseer-pop-backup') {
+    updateOverseerSettings({ backupProviderId: t.value || null });
+  } else if (t.id === 'overseer-pop-judge') {
+    updateOverseerSettings({ autoJudgeAmbiguous: t.checked });
+  } else if (t.id === 'overseer-pop-unblock') {
+    updateOverseerSettings({ autoUnblockStuck: t.checked });
+  }
+});
+document.addEventListener('click', event => {
+  const pop = $('#overseer-popover');
+  if (pop && !pop.classList.contains('hidden') && event.target?.isConnected && !pop.contains(event.target) && !event.target.closest('#overseer-toggle')) {
+    toggleOverseerPopover(false);
+  }
+});
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    const pop = $('#overseer-popover');
+    if (pop && !pop.classList.contains('hidden')) toggleOverseerPopover(false);
+  }
+});
 $('#copy-id').addEventListener('click', async () => {
   try { await navigator.clipboard.writeText(selectedId ?? ''); toast('Task ID copied.'); }
   catch { toast('Clipboard is unavailable. The full task ID is in the activity ledger.'); }
