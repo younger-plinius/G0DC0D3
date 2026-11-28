@@ -129,7 +129,11 @@ function escapeHtmlBasic(str) {
 
 /** Deterministic, rich fallback visualizer (works instantaneously even offline or if a model omits HTML). */
 export function buildFallbackVisualizerHtml(payload) {
-  const safeJson = JSON.stringify(payload).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+  const safeJson = JSON.stringify(payload)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
   const title = escapeHtmlBasic(payload?.task?.title || 'Live Agent Visualizer');
   return `<!doctype html>
 <html lang="en">
@@ -254,10 +258,12 @@ function extractHtmlDocument(rawText) {
 const VISUALIZER_META_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none';";
 
 function injectMetaCsp(doc) {
-  if (!doc || /http-equiv\s*=\s*["']?content-security-policy/i.test(doc)) return doc;
+  if (!doc) return doc;
+  // Strip any model-supplied CSP meta tags so an LLM can never weaken our strict offline sandbox policy.
+  const stripped = doc.replace(/<meta\b[^>]*http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi, '');
   const tag = `<meta http-equiv="Content-Security-Policy" content="${VISUALIZER_META_CSP}">`;
-  if (/<head[\s>]/i.test(doc)) return doc.replace(/<head([^>]*)>/i, `<head$1>\n${tag}`);
-  return `${tag}\n${doc}`;
+  if (/<head[\s>]/i.test(stripped)) return stripped.replace(/<head([^>]*)>/i, `<head$1>\n${tag}`);
+  return `${tag}\n${stripped}`;
 }
 
 export async function generateTaskVisualizer({
@@ -292,11 +298,13 @@ export async function generateTaskVisualizer({
     ].join('\n\n');
 
     try {
+      const modelBase = String(provider.model || provider.id || '').toLowerCase().split('/').pop();
+      const samplingLocked = /^(?:o1|o3|o4|gpt-[56])(?:$|[.-])/.test(modelBase);
       const res = await provider.draft(
         [{ role: 'system', content: sysPrompt }, { role: 'user', content: userPrompt }],
         signal,
         4096,
-        { temperature: 0.45 },
+        samplingLocked ? {} : { temperature: 0.45 },
         outbound
       );
       if (res?.type === 'message' && typeof res.text === 'string') {
@@ -320,8 +328,14 @@ export async function generateTaskVisualizer({
   html = injectMetaCsp(html);
 
   const filePath = visualizerFilePath(dataDir, task?.id);
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, html, 'utf8');
+  await fs.mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
+  const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fs.writeFile(tmpPath, html, { encoding: 'utf8', mode: 0o600 });
+    await fs.rename(tmpPath, filePath);
+  } finally {
+    await fs.rm(tmpPath, { force: true }).catch(() => {});
+  }
 
   return {
     ok: true,

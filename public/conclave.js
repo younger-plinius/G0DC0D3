@@ -91,9 +91,10 @@
   let replayPlaying = false;
   let replayProgress = 100; // 0..100
   let blindMode = false;
-  let blindRevealedRaceId = null;
+  let blindRevealedRaces = new Set();
   let leaderboardData = null;
   let crownedByRace = new Map();
+  const raceStateKey = (taskId, raceId) => `${taskId || ''}:${raceId || ''}`;
   const SIGILS = ['✦', '⚡', '◈', '⛨', '⌘', 'λ', 'Ω', 'Δ'];
 
   function rankTierForElo(elo = 1500) {
@@ -328,7 +329,7 @@
       if (e.target.closest('#conclave-replay-toggle')) { toggleReplay(); return; }
       if (e.target.closest('[data-conclave-blind-toggle]')) {
         blindMode = !blindMode;
-        if (!blindMode && data?.arena?.raceId) blindRevealedRaceId = data.arena.raceId;
+        if (!blindMode && data?.arena?.raceId) blindRevealedRaces.add(raceStateKey(currentTaskId, data.arena.raceId));
         renderCards();
         return;
       }
@@ -1487,8 +1488,9 @@
     if (data?.mode === 'arena' && data?.arena) {
       const arena = data.arena;
       const raceId = arena.raceId || '';
-      const hideNames = blindMode && blindRevealedRaceId !== raceId;
-      const crownedId = crownedByRace.get(raceId) || arena.crownedWinnerId || null;
+      const rKey = raceStateKey(currentTaskId, raceId);
+      const hideNames = blindMode && !blindRevealedRaces.has(rKey);
+      const crownedId = crownedByRace.get(rKey) || arena.crownedWinnerId || null;
       const effectiveWinner = crownedId || arena.winnerId || null;
       const hasFinished = (arena.contenders || []).some(c => c.status === 'completed' || c.grade);
       const toolbarHtml = `<div class="conclave-race-toolbar">
@@ -2411,7 +2413,7 @@
       if (!res.ok || token !== fetchToken) return;
       data = await res.json();
       if (data?.arena?.raceId && data.arena.crownedWinnerId) {
-        crownedByRace.set(data.arena.raceId, data.arena.crownedWinnerId);
+        crownedByRace.set(raceStateKey(taskId, data.arena.raceId), data.arena.crownedWinnerId);
       }
       renderAll();
       // Auto-open gently if multiple workers or an active arena/crew are running for the first time on this task
@@ -3134,8 +3136,11 @@
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Could not crown contender.');
-      if (json.raceId) crownedByRace.set(json.raceId, providerId);
-      blindRevealedRaceId = json.raceId || blindRevealedRaceId;
+      const rKey = raceStateKey(currentTaskId, json.raceId || raceId || '');
+      if (json.raceId || raceId) {
+        crownedByRace.set(rKey, providerId);
+        blindRevealedRaces.add(rKey);
+      }
       playTactileCue('conclave');
       const deltaTxt = json.delta >= 0 ? `+${json.delta}` : String(json.delta);
       const label = (data?.arena?.contenders || []).find(c => c.providerId === providerId)?.label || providerId;
@@ -3159,7 +3164,8 @@
       '| Slot | Model | Score | Fidelity | Complete | Clarity | Latency |',
       '|---|---|---:|---:|---:|---:|---:|',
       ...arena.contenders.map(c => {
-        const crown = (crownedByRace.get(arena.raceId || '') || arena.winnerId) === c.providerId ? ' 👑' : '';
+        const rKey = raceStateKey(currentTaskId, arena.raceId || '');
+        const crown = (crownedByRace.get(rKey) || arena.crownedWinnerId || arena.winnerId) === c.providerId ? ' 👑' : '';
         const g = c.grade;
         return `| ${c.slot} | ${c.label}${crown} | ${g ? `${g.total}/15` : c.status} | ${g ? g.fidelity : '—'} | ${g ? g.completeness : '—'} | ${g ? g.clarity : '—'} | ${fmtMs(c.durationMs)} |`;
       }),

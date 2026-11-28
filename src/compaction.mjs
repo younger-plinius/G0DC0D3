@@ -255,7 +255,9 @@ export async function distillSemanticSummary({
     const maxCap = Number.isInteger(limits.max_tokens?.max) && limits.max_tokens.max > 0 ? limits.max_tokens.max : 900;
     const clampedTokens = Math.min(900, maxCap, Number.isInteger(provider.maxOutputTokensCeiling) && provider.maxOutputTokensCeiling > 0 ? provider.maxOutputTokensCeiling : 900);
     const tempField = limits.temperature;
-    const tempOpt = tempField?.supported === false
+    const baseModel = String(provider.model || provider.id || '').toLowerCase().split('/').pop();
+    const samplingLocked = /^(?:o1|o3|o4|gpt-[56])(?:$|[.-])/.test(baseModel);
+    const tempOpt = (samplingLocked || tempField?.supported === false)
       ? {}
       : { temperature: Math.min(Number.isFinite(tempField?.max) ? tempField.max : 2, Math.max(Number.isFinite(tempField?.min) ? tempField.min : 0, 0.1)) };
     const outboundOpts = { privacy, onOutbound, ...(extraSecrets ? { extraSecrets } : {}) };

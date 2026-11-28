@@ -7,6 +7,8 @@ import path from 'node:path';
 import { createApp } from '../src/server.mjs';
 import { applyDomainOutcome, buildConclaveLeaderboard, eloRankTier, emptyLearning } from '../src/learning.mjs';
 import { NorthStarManager, extractMetric, isStrictlyBetter, normalizeNorthStarInput } from '../src/northstar.mjs';
+import { generateTaskVisualizer, readTaskVisualizerHtml } from '../src/visualizer.mjs';
+import { distillSemanticSummary } from '../src/compaction.mjs';
 import { gitInit, gitCommit } from '../src/git.mjs';
 
 async function withTempDir(fn) {
@@ -352,5 +354,57 @@ test('v0.3.1 Debug Pass 2 regressions: Conclave refusal failover, qa-preview 400
     } finally {
       await app.close();
     }
+  });
+});
+
+test('v0.3.1 Debug Pass 3 regressions: visualizer CSP strip & reasoning-locked temp omit + compaction temp omit', async () => {
+  await withTempDir(async dir => {
+    let vizGenSeen = null;
+    let compactGenSeen = null;
+    const lockedProvider = {
+      id: 'openai:gpt-5.4',
+      label: 'GPT-5.4',
+      model: 'gpt-5.4',
+      kind: 'http',
+      protocol: 'openai-chat',
+      available: true,
+      async draft(msgs, _sig, _tok, gen) {
+        if (msgs[0]?.content?.includes('Visualizer')) {
+          vizGenSeen = gen;
+          return {
+            type: 'message',
+            finish: 'done',
+            text: '<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="default-src *"><title>Viz</title></head><body><h1>OK</h1></body></html>',
+          };
+        }
+        compactGenSeen = gen;
+        return {
+          type: 'message',
+          finish: 'done',
+          text: JSON.stringify({ goalAndState: 'All good', decisions: ['Ship cleanly'], ruledOut: [], constraintsAndPrefs: [], nextStep: 'Verify' }),
+        };
+      },
+    };
+    const viz = await generateTaskVisualizer({
+      dataDir: dir,
+      task: { id: 'task-viz-1', title: 'Test', objective: 'Test', status: 'running' },
+      events: [],
+      files: [],
+      provider: lockedProvider,
+    });
+    assert.equal(viz.ok, true);
+    assert.equal(vizGenSeen?.temperature, undefined, 'Visualizer must omit temperature on sampling-locked gpt-5/o3 models');
+    const html = await readTaskVisualizerHtml(dir, 'task-viz-1');
+    assert.ok(html.includes("default-src 'none'"), 'Strict offline meta CSP must be injected');
+    assert.ok(!html.includes('default-src *'), 'Permissive model-supplied CSP meta tag must be stripped');
+
+    const distilled = await distillSemanticSummary({
+      provider: lockedProvider,
+      task: { objective: 'Verify compaction' },
+      structuralSummary: {},
+      foldedEvents: [{ seq: 1, type: 'user.message', data: { message: 'Remember to keep zero dependencies.' } }],
+    });
+    assert.ok(distilled?.goalAndState === 'All good');
+    assert.equal(compactGenSeen?.temperature, undefined, 'Semantic compaction must omit temperature on sampling-locked gpt-5/o3 models');
   });
 });

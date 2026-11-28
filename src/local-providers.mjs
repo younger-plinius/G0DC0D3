@@ -542,23 +542,23 @@ export async function createLocalProviderManager({ dataDir, providers, fetchImpl
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
-      let response;
+      let data;
       try {
-        response = await fetchImpl(`${cleanOrigin}/api/pull`, {
+        const response = await fetchImpl(`${cleanOrigin}/api/pull`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ name: pullName, stream: false }),
           redirect: 'error',
           signal: controller.signal,
         });
+        if (!response.ok) {
+          const text = await response.text().catch(() => '');
+          throw fault(`Ollama pull failed (HTTP ${response.status})${text ? `: ${text.slice(0, 180)}` : ''}. Is Ollama running?`, 502);
+        }
+        data = await readCappedJson(response, MAX_PROBE_RESPONSE_BYTES) || {};
       } finally {
         clearTimeout(timer);
       }
-      if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw fault(`Ollama pull failed (HTTP ${response.status})${text ? `: ${text.slice(0, 180)}` : ''}. Is Ollama running?`, 502);
-      }
-      const data = await readCappedJson(response, MAX_PROBE_RESPONSE_BYTES) || {};
       if (data?.error) throw fault(`Ollama pull failed: ${String(data.error).slice(0, 180)}`, 502);
 
       // Automatically register the freshly pulled model in G0DC0D3

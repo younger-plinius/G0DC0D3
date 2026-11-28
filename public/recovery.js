@@ -68,7 +68,7 @@ const RecoveryUI = (() => {
     const available = (models || []).filter(model => model.id?.startsWith('venice-catalog:') && model.id !== primary && model.available !== false);
     // Prefer Venice Uncensored and fast models already exercised in desktop workflows.
     // Only choose from the live catalog, and never enroll another provider account.
-    for (const model of ['venice-uncensored-1-2', 'venice-uncensored', 'z-ai-glm-5-3-flash', 'qwen-3-7-plus', 'deepseek-v4-1-flash-1017', 'deepseek-v4-1-flash']) {
+    for (const model of ['glm-5-3-flash-uncensored', 'deepseek-v4-1-flash-1017-uncensored', 'abliteration-abliterated-model-large-v2', 'venice-uncensored-1-2', 'venice-uncensored', 'z-ai-glm-5-3-flash', 'qwen-3-7-plus', 'deepseek-v4-1-flash-1017', 'deepseek-v4-1-flash']) {
       const match = available.find(entry => entry.id === 'venice-catalog:' + model);
       if (match) return match.id;
     }
