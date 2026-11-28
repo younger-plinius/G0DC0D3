@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { discoverSubagents, runSpecialistSubagent } from './subagents.mjs';
 import { checkProviderPrivacyAllowed, DEFAULT_PRIVACY_SETTINGS } from './privacy.mjs';
+import { detectRefusal } from './routing.mjs';
 
 export const CONCLAVE_MODES = Object.freeze(['parallel', 'critique', 'debate']);
 
@@ -115,7 +116,8 @@ async function synthesizeVerdict({ runtime, task, mission, mode, formationName, 
         }, { signal, ...outbound, onDelta });
       }
       if (signal?.aborted) throw Object.assign(new Error('Conclave cancelled.'), { code: 'cancelled' });
-      if (res && res.type === 'message' && typeof res.text === 'string' && res.text.trim()) {
+      const refused = res?.finish === 'refusal' || Boolean(detectRefusal(res));
+      if (!refused && res && res.type === 'message' && typeof res.text === 'string' && res.text.trim()) {
         return { text: res.text.trim(), providerId: provider.id, modelLabel: provider.label || provider.model || provider.id, usage: res.usage || null };
       }
     } catch (err) {
@@ -512,5 +514,6 @@ export async function runConclaveSession({
     if (activeMap.size === 0) runtime.activeSubagents.delete(taskId);
     runtime._conclaveRuns.delete(taskId);
     runtime._liveTurn.delete(taskId);
+    try { runtime._promotePendingProviders?.(taskId); } catch {}
   }
 }

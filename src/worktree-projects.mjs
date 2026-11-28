@@ -18,7 +18,7 @@ async function git(cwd, args, input) {
         '-c', 'core.hooksPath=/dev/null',
         '-c', 'core.fsmonitor=false',
         '-c', 'core.pager=cat',
-        '-c', 'diff.external=false',
+        '-c', 'diff.external=',
         '-c', 'core.attributesfile=/dev/null',
         '-c', 'core.sshCommand=/usr/bin/false',
         ...extraFlags,

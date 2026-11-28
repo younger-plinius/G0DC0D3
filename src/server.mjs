@@ -998,7 +998,9 @@ export async function createApp({dataDir=process.env.G0D_DATA_DIR || path.join(p
         if (req.method === 'POST' && sub === 'qa-preview') {
           const body = await readBody(req);
           const rawUrl = String(body.url || '').trim();
-          const parsed = new URL(rawUrl, `http://${expectedHost}`);
+          let parsed;
+          try { parsed = new URL(rawUrl, `http://${expectedHost}`); }
+          catch { throw Object.assign(new Error('Auto-QA only accepts local /preview/<token>/ URLs on this server.'), { status: 400, code: 'INVALID_QA_URL' }); }
           if (!hosts.has(parsed.host) || !parsed.pathname.startsWith('/preview/')) {
             throw Object.assign(new Error('Auto-QA only accepts local /preview/<token>/ URLs on this server.'), { status: 400, code: 'INVALID_QA_URL' });
           }

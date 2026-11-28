@@ -3696,6 +3696,7 @@ export class Runtime {
     const task = this.getTask(id);
     if (terminal.has(task.status) || active.has(task.status) || task.status === 'queued') return task;
     if (this.runs.has(id) || this.broker.locks.has(id)) throw fault('RUN_DRAINING', 'Workspace work is still settling; retry resume shortly.');
+    this._promotePendingProviders(id);
     return this.store.updateTask(id, current => { current.status = 'queued'; current.blocker = null; return current; }, 'task.status', { status: 'queued' });
   }
   updatePolicy(id, patch) {
@@ -3982,6 +3983,9 @@ export class Runtime {
     };
   }
   recordConclaveAgentRun(rawSlug, { ok = true, durationMs = 0, mvp = false } = {}) {
+    if (this.getPrivacy().settings?.ephemeralSession === true) {
+      return computeXpLevel(null);
+    }
     try {
       const slug = slugifyAgent(rawSlug || 'explore');
       const map = { ...(this.store.getLocalState('conclave_agent_xp', {}) || {}) };

@@ -285,3 +285,72 @@ test('v0.3.1 Phase 3 North Star AutoResearch: git-atomic keep/revert, guardrails
     await restored.close();
   });
 });
+
+test('v0.3.1 Debug Pass 2 regressions: Conclave refusal failover, qa-preview 400 guard, ephemeral skill delete & XP gate', async () => {
+  await withTempDir(async dir => {
+    const refusingPrimary = {
+      id: 'prov:refuse',
+      label: 'Timid Primary',
+      model: 'timid-primary',
+      kind: 'http',
+      available: true,
+      async draft() { return { type: 'message', finish: 'refusal', text: 'I cannot assist with this request.' }; },
+      async turn() { return { type: 'message', finish: 'done', text: 'Specialist findings from primary.' }; },
+    };
+    const helpfulBackup = {
+      id: 'prov:backup',
+      label: 'Helpful Backup',
+      model: 'helpful-backup',
+      kind: 'http',
+      available: true,
+      async draft() { return { type: 'message', finish: 'done', text: '## Final Council Verdict\nActionable synthesis from backup.' }; },
+      async turn() { return { type: 'message', finish: 'done', text: 'Specialist findings from backup.' }; },
+    };
+    const providers = new Map([
+      ['prov:refuse', refusingPrimary],
+      ['prov:backup', helpfulBackup],
+    ]);
+    const app = await createApp({ dataDir: path.join(dir, 'data'), providers, auth: false, startScheduler: false });
+    const baseUrl = await app.listen(0);
+    try {
+      // 1. Conclave Lead Synthesizer fails over past refusing primary to backup
+      const launchRes = await fetch(`${baseUrl}/api/conclave/run`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-g0d-request': '1' },
+        body: JSON.stringify({ mission: 'Audit lock-free queue edge cases', agents: ['explore'], mode: 'parallel', providerIds: ['prov:refuse', 'prov:backup'] }),
+      });
+      assert.equal(launchRes.status, 202);
+      const launched = await launchRes.json();
+      const taskId = launched.task.id;
+      const runEntry = app.runtime.runs.get(taskId);
+      if (runEntry?.promise) await runEntry.promise;
+      const events = app.runtime.getEvents(taskId);
+      const finalResp = [...events].reverse().find(e => e.type === 'model.response');
+      assert.equal(finalResp?.data?.providerId, 'prov:backup', 'Synthesizer must fail over from refusing primary to backup');
+      assert.ok(finalResp?.data?.response?.text?.includes('Final Council Verdict'));
+
+      // 2. Malformed qa-preview URL returns clean 400 (never 500)
+      const qaRes = await fetch(`${baseUrl}/api/tasks/${encodeURIComponent(taskId)}/browser/qa-preview`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-g0d-request': '1' },
+        body: JSON.stringify({ url: 'http://[bad-host' }),
+      });
+      assert.equal(qaRes.status, 400);
+
+      // 3. Ephemeral session blocks DELETE /api/skills/:name and Conclave XP persistence
+      app.runtime.updatePrivacy({ ephemeralSession: true });
+      const delSkillRes = await fetch(`${baseUrl}/api/skills/nonexistent-skill`, {
+        method: 'DELETE',
+        headers: { 'x-g0d-request': '1' },
+      });
+      assert.equal(delSkillRes.status, 403);
+      const xpBefore = app.runtime.store.getLocalState('conclave_agent_xp', {});
+      app.runtime.recordConclaveAgentRun('ephemeral-test-agent', { ok: true, durationMs: 120 });
+      const xpAfter = app.runtime.store.getLocalState('conclave_agent_xp', {});
+      assert.equal(xpAfter['ephemeral-test-agent'], undefined, 'Ephemeral session must not persist Conclave agent XP');
+      assert.deepEqual(xpAfter, xpBefore);
+    } finally {
+      await app.close();
+    }
+  });
+});

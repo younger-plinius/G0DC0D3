@@ -1158,12 +1158,29 @@
     const chosenMode = launchMode;
     playTactileCue('conclave');
     if (chosenMode === 'race') {
+      if (autoSend && typeof window.launchBlindRace === 'function') {
+        const btn = document.getElementById('conclave-launch-btn');
+        if (btn) { btn.disabled = true; btn.textContent = '⚔ Launching race…'; }
+        const launched = await window.launchBlindRace(mission);
+        if (btn) { btn.disabled = false; btn.textContent = '✦ Launch Conclave →'; }
+        if (!launched) return;
+        if (isExpanded) toggleExpand();
+        forceShowLaunchpad = false;
+        activeTemplateId = null;
+        if (input) input.value = '';
+        launchMission = '';
+        renderAll();
+        if (typeof window.toast === 'function') window.toast('⚔ Blind Conclave Race launched!');
+        return;
+      }
       try {
-        await fetch('/api/router', {
+        const res = await fetch('/api/router', {
           method: 'PATCH',
           headers: { 'content-type': 'application/json', 'x-g0d-request': '1' },
           body: JSON.stringify({ mode: 'auto_arena' }),
         });
+        const rJson = await res.json().catch(() => null);
+        if (window.state) window.state.router = rJson?.settings || { ...(window.state.router || {}), mode: 'auto_arena' };
       } catch {}
       const composer = document.getElementById('composer-input');
       if (composer) {
@@ -1177,7 +1194,7 @@
         }
         if (input) input.value = '';
         launchMission = '';
-        if (typeof window.toast === 'function') window.toast('⚔ Blind Conclave Race launched!');
+        if (typeof window.toast === 'function') window.toast('⚔ Blind Race loaded into chat — press Enter to launch.');
         return;
       }
     }
@@ -1196,7 +1213,7 @@
       if (input) input.value = '';
       launchMission = '';
       renderAll();
-      if (typeof window.toast === 'function') window.toast(`✦ Conclave 2.0 launched (${slugs.length} specialists · ${chosenMode})!`);
+      if (typeof window.toast === 'function') window.toast(`✦ Conclave launched (${slugs.length} specialists · ${chosenMode})!`);
       return;
     }
     const prompt = buildMissionPrompt(mission, { slugs, mode: chosenMode });

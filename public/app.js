@@ -1944,6 +1944,53 @@ window.launchNativeConclave = async function launchNativeConclave({ mission, age
     return false;
   }
 };
+window.launchBlindRace = async function launchBlindRace(mission) {
+  const cleanMission = String(mission || '').trim();
+  if (!cleanMission) return false;
+  if ($('#connection') && !$('#connection').classList.contains('online')) {
+    toast('Server is offline — reconnect before launching a Blind Race.');
+    return false;
+  }
+  const avail = typeof newConversationProviders === 'function' ? newConversationProviders() : [];
+  if (!avail.length) {
+    toast('Connect at least one AI provider in Settings → Models before launching a Blind Race.');
+    return false;
+  }
+  try {
+    const routerRes = await api('/api/router', {
+      method: 'PATCH',
+      body: JSON.stringify({ mode: 'auto_arena' }),
+    });
+    if (routerRes?.settings) state.router = routerRes.settings;
+    else state.router = { ...(state.router || {}), mode: 'auto_arena' };
+    renderComposer();
+    const preferences = RecoveryUI.preferences();
+    const { task } = await api('/api/conversations', {
+      method: 'POST',
+      body: JSON.stringify({
+        objective: cleanMission,
+        providerIds: avail,
+        generation: generationDefaults(),
+        persona: preferences.persona || 'plinian',
+        effort: draftEffort,
+        policy: RecoveryUI.policy(null),
+        planMode: false,
+      }),
+    });
+    if (task?.id) {
+      state.tasks = [task, ...(state.tasks || []).filter(t => t.id !== task.id)];
+      await selectTask(task.id);
+      window.G0DConclave?.open?.({ lens: 'stage' });
+      window.G0DConclave?.syncTask?.(task);
+      await api(`/api/tasks/${encodeURIComponent(task.id)}/run`, { method: 'POST', body: '{}' });
+      await refresh();
+    }
+    return true;
+  } catch (err) {
+    toast(err?.message || 'Could not launch Blind Conclave Race.');
+    return false;
+  }
+};
 window.submitConclaveMission = function submitConclaveMission(promptText) {
   const input = $('#composer-input');
   const form = $('#composer-form');
